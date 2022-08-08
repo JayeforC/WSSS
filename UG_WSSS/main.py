@@ -1,4 +1,5 @@
 from turtle import forward
+from urllib import request
 import torch
 from attention_cam.mix_transformer import MixVisionTransformer
 from attention_cam.segformer_head import SegFormerHead
@@ -96,14 +97,20 @@ def get_mask_by_radius(h=20, w=20, radius=8):
 
 
 class get_uncertainty(nn.Module):
-    def __init__(self,input_dim):
+    def __init__(self,input_dim,hidden_dim,BatchNorm=nn.BatchNorm2d,dropout=0.1):
         super().__init__()
         self.input_dim = input_dim
-
+        self.hidden_dim = hidden_dim
+        self.input_proj = nn.Sequential(nn.Conv2d(input_dim,hidden_dim,kernel_size=1,bias=False),BatchNorm(self.hidden_dim),nn.ReLU(inplace=True),nn.Dropout2d(p=dropout))
+        self.conv = nn.Conv2d(hidden_dim,hidden_dim,kernel_size=1)
         self.mean_conv = nn.Conv2d(self.input_dim, 1, kernel_size=1, bias=False)
         self.std_conv  = nn.Conv2d(self.input_dim, 1, kernel_size=1, bias=False)
 
-    
+        ##kernel weight define
+        kernel = torch.ones((7,7))
+        kernel = torch.FloatTensor(kernel).unsqueeze(0).unsqueeze(0)
+        self.weight = nn.Parameter(data=kernel,requires_grad=False)
+
     def reparameterize(self,mean,var,iter=1):
         sample_z = []
         for _ in range(iter):
@@ -114,10 +121,33 @@ class get_uncertainty(nn.Module):
         return sample_z
     
     def forward(self,x):
-        
+        """
+        Input: x [B,C,H,W]
+        """
+        x = self.input_proj(x)
+        residual = self.conv(x)
         mean = self.mean_conv(x)
-        var  = self.std_conv(x)
-        
+        std  = self.std_conv(x)
+        prob_x = self.reparameterize(mean,std,1)
+        prob_out = self.reparameterize(mean,std,50)
+        prob_out = torch.sigmoid(prob_out)
+
+        #uncertainty
+        uncertainty_map = prob_out.var(dim=1,keepdim=True).detach()
+        if self.training:
+            uncertainty_map=F.conv2d(uncertainty_map,self.weight,padding=3,groups=1)
+            uncertainty_map=F.conv2d(uncertainty_map,self.weight,padding=3,groups=1)
+            uncertainty_map=F.conv2d(uncertainty_map,self.weight,padding=3,groups=1)
+        uncertainty_map = (uncertainty_map - uncertainty_map.min()) / (uncertainty_map.max() - uncertainty_map.min())
+        residual *= (1-uncertainty_map)
+
+        #random mask 
+        if self.training:
+            rand_mask = uncertainty_map < torch.Tensor(np.random.random(uncertainty_map.size())).to(uncertainty_map.device)
+            residual *= rand_mask.to(torch.float32)
+      
+        return residual,prob_x
+
 """
 ##0. Import Data
 """
@@ -158,6 +188,43 @@ aff_loss, pos_count, neg_count = get_aff_loss(attn_pred, aff_label)
 """
 ##3. Uncertainty Part
 """
+uncertainty_model = get_uncertainty()
+# use refined psudo lable to generate uncertainty map
+uncertainty_masked, prob_x = uncertainty_model(refined_pseudo_label)
+
+
+"""
+##4. final segmentation pseudo label part 
+"""
+# random walk part
+valid_cam_resized = F.interpolate(valid_cam, size=(infer_size, infer_size), mode='bilinear', align_corners=False)
+aff_cam_l = propagte_aff_cam_with_bkg(valid_cam_resized, aff=aff_mat.detach().clone(), mask=attn_mask_infer, cls_labels=cls_labels, bkg_score=cfg.cam.low_thre)
+aff_cam_l = F.interpolate(aff_cam_l, size=pseudo_label.shape[1:], mode='bilinear', align_corners=False)
+aff_cam_h = propagte_aff_cam_with_bkg(valid_cam_resized, aff=aff_mat.detach().clone(), mask=attn_mask_infer, cls_labels=cls_labels, bkg_score=cfg.cam.high_thre)
+aff_cam_h = F.interpolate(aff_cam_h, size=pseudo_label.shape[1:], mode='bilinear', align_corners=False)
+
+bkg_cls = bkg_cls.to(cams.device)
+_cls_labels = torch.cat((bkg_cls, cls_labels), dim=1)
+
+# final segmentation pseudo label generation
+refined_aff_cam_l = refine_cams_with_cls_label(par, inputs_denorm, cams=aff_cam_l, labels=_cls_labels, img_box=img_box)
+refined_aff_label_l = refined_aff_cam_l.argmax(dim=1)
+refined_aff_cam_h = refine_cams_with_cls_label(par, inputs_denorm, cams=aff_cam_h, labels=_cls_labels, img_box=img_box)
+refined_aff_label_h = refined_aff_cam_h.argmax(dim=1)
+
+aff_cam = aff_cam_l[:,1:]
+refined_aff_cam = refined_aff_cam_l[:,1:,]
+refined_aff_label = refined_aff_label_h.clone()
+refined_aff_label[refined_aff_label_h == 0] = cfg.dataset.ignore_index
+refined_aff_label[(refined_aff_label_h + refined_aff_label_l) == 0] = 0
+refined_aff_label = ignore_img_box(refined_aff_label, img_box=img_box, ignore_index=cfg.dataset.ignore_index)
+
+
+#calculate the uncertainty map part loss
+BCE_criterior = nn.CrossEntropyLoss(ignore_index=255)
+KL_divergence = nn.KLDivLoss(size_average=False,reduce=False)
+uncertainty_loss = BCE_criterior(prob_x,)
+
 features_x4 = _x[3]
 
 _cam, _aff_mat = wetr(inputs_cat, cam_only=True)
