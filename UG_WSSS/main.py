@@ -1,6 +1,8 @@
 from turtle import forward
 from urllib import request
+from UGTR.model.transformer import Transformer
 import torch
+from afa_.utils.evaluate import pseudo_scores
 from attention_cam.mix_transformer import MixVisionTransformer
 from attention_cam.segformer_head import SegFormerHead
 import torchvision.transforms as transforms
@@ -95,6 +97,15 @@ def get_mask_by_radius(h=20, w=20, radius=8):
 
     return mask
 
+def get_seg_loss(pred, label, ignore_index=255):
+    bg_label = label.clone()
+    bg_label[label!=0] = ignore_index
+    bg_loss = F.cross_entropy(pred, bg_label.type(torch.long), ignore_index=ignore_index)
+    fg_label = label.clone()
+    fg_label[label==0] = ignore_index
+    fg_loss = F.cross_entropy(pred, fg_label.type(torch.long), ignore_index=ignore_index)
+
+    return (bg_loss + fg_loss) * 0.5
 
 class get_uncertainty(nn.Module):
     def __init__(self,input_dim,hidden_dim,BatchNorm=nn.BatchNorm2d,dropout=0.1):
@@ -190,14 +201,30 @@ aff_loss, pos_count, neg_count = get_aff_loss(attn_pred, aff_label)
 """
 uncertainty_model = get_uncertainty()
 # use refined psudo lable to generate uncertainty map
-uncertainty_masked, prob_x = uncertainty_model(refined_pseudo_label)
-
+uncertainty_masked, prob_x = uncertainty_model(pseudo_label)
+#calculate the uncertainty map part loss
+BCE_criterior = nn.CrossEntropyLoss(ignore_index=255)
+KL_divergence = nn.KLDivLoss(size_average=False,reduce=False)
+uncertainty_loss = BCE_criterior(prob_x,refined_pseudo_label)
 
 """
 ##4. final segmentation pseudo label part 
+
+In this part, the affinity map, pseudo label and uncertainty map should be
+integrated as a whole to generate the final segmentation pseudo label
+
+Consider two different place to integerate the uncertainty map 
 """
+
+# across attention part to integrate 
 # random walk part
+"""place one: integrate uncertanity with valid_cam_resized"""
 valid_cam_resized = F.interpolate(valid_cam, size=(infer_size, infer_size), mode='bilinear', align_corners=False)
+"""
+integrate uncertanity with valid_cam_resized by across attention mechanism 
+"""
+valid_cam_resized = Transformer(across_attention, valid_cam_resized,uncertainty_masked)
+
 aff_cam_l = propagte_aff_cam_with_bkg(valid_cam_resized, aff=aff_mat.detach().clone(), mask=attn_mask_infer, cls_labels=cls_labels, bkg_score=cfg.cam.low_thre)
 aff_cam_l = F.interpolate(aff_cam_l, size=pseudo_label.shape[1:], mode='bilinear', align_corners=False)
 aff_cam_h = propagte_aff_cam_with_bkg(valid_cam_resized, aff=aff_mat.detach().clone(), mask=attn_mask_infer, cls_labels=cls_labels, bkg_score=cfg.cam.high_thre)
@@ -219,11 +246,20 @@ refined_aff_label[refined_aff_label_h == 0] = cfg.dataset.ignore_index
 refined_aff_label[(refined_aff_label_h + refined_aff_label_l) == 0] = 0
 refined_aff_label = ignore_img_box(refined_aff_label, img_box=img_box, ignore_index=cfg.dataset.ignore_index)
 
+"""place two: integrate uncertanity with refined aff label"""
+refined_aff_label = Transformer(across_attention, refined_aff_label,uncertainty_masked)
+#seg loss
+seg_loss = get_seg_loss(segs, refined_aff_label.type(torch.long), ignore_index=cfg.dataset.ignore_index)
 
-#calculate the uncertainty map part loss
-BCE_criterior = nn.CrossEntropyLoss(ignore_index=255)
-KL_divergence = nn.KLDivLoss(size_average=False,reduce=False)
-uncertainty_loss = BCE_criterior(prob_x,)
+"""
+##5. Classification loss
+"""
+cls_loss = F.multilabel_soft_margin_loss(cls, cls_labels)
+
+"""###6. Training Strategy"""
+
+loss = 1.0 * cls_loss + 0.1 * seg_loss + 0.1 * aff_loss + 0.1 * uncertainty_loss
+
 
 features_x4 = _x[3]
 
