@@ -46,11 +46,11 @@ class BaseDataSets_ACDC(Dataset):
     
     def __getitem__(self, idx):
         case = self.sample_list[idx]
-        if self.sample_list == "train":
+        if self.split == "train":
             data_path = os.path.join(self.root_dir,"train_npz", case )
             data = np.load(data_path)
         else: 
-            data_path = os.path.join(self.root_dir,"train_npz", case )
+            data_path = os.path.join(self.root_dir,"test_npz", case )
             data = np.load(data_path)
 
         image, label = data['image'], data['label']
@@ -59,7 +59,7 @@ class BaseDataSets_ACDC(Dataset):
             cls_label = seg_label.max()
             sample = {'image':image,'cls_label':cls_label,'seg_label':seg_label}
         else:
-            sample = {'image':image,'seg_label':seg_label}
+            sample = {'image':image,'seg_label':label}
         if self.transform is not None:
             sample = self.transform(sample)
         sample["idx"] = idx
@@ -67,16 +67,50 @@ class BaseDataSets_ACDC(Dataset):
 
 class BaseDataSets_ProX2(Dataset):
     def __init__(self,root_dir='/home/jaye/Documents/MedicalDatasets/ProstateX2/processed_training/',
-                split='train',num=None,transform=None,):
+                split='train',num=None,transform=None,cls_model=True):
         self.root_dir = root_dir
         self.sample_list = []
-        self,split = split
+        self.split = split
         self.transform = transform
-        if self.spli == "train":
+        self.cls_model = cls_model
+        if self.split == "train":
             with open(self.root_dir + 'lists_ProstateX2/train.txt','r') as f:
                 self.sample_list = f.readlines()
             self.sample_list = [item.replace('\n','') 
                                 for item in self.sample_list]
+        elif self.split == "val":
+            with open(self.root_dir + '/lists_Prostate/test.txt','r') as f:
+                self.sample_list = f.readlines()
+            self.sample_list = [item.replace('\n','') 
+                                for item in self.sample_list]
+
+        if num is not None and self.split == 'train':
+            self.sample_list = self.sample_list[:num]
+
+        print(f"[DATA INFO] Total Samples:{len(self.sample_list)}")
+    def __len__(self):
+        return len(self.sample_list)
+    
+    def __getitem__(self, idx):
+        case = self.sample_list[idx]
+        if self.split == "train":
+            data_path = os.path.join(self.root_dir,"train_npz", case )
+            data = np.load(data_path)
+        else: 
+            data_path = os.path.join(self.root_dir,"test_npz", case )
+            data = np.load(data_path)
+
+        image, label = data['image'], data['label']
+        if self.cls_model:
+            seg_label = (label != 0).astype(np.uint8)
+            cls_label = seg_label.max()
+            sample = {'image':image,'cls_label':cls_label,'seg_label':seg_label}
+        else:
+            sample = {'image':image,'seg_label':label}
+        if self.transform is not None:
+            sample = self.transform(sample)
+        sample["idx"] = idx
+        return sample       
 
 class BaseDataset_CHAOS(Dataset):
     def __init__(self,root_dir='./CHAOS/train') -> None:
@@ -99,13 +133,13 @@ def build_loader(config,num,transform):
         pass
 
 if __name__ == "__main__":
-    train_ds = BaseDataSets_ACDC()
+    train_ds = BaseDataSets_ProX2()
     train_loader = DataLoader(train_ds,batch_size=1,shuffle=True)
     for i,data in enumerate(train_loader):
         if i == 0:
             image, cls_label, seg_label = data['image'], data['cls_label'],data['seg_label']
 
-            plt.imshow(image[0] + seg_label[0],'gray')
+            plt.imshow(image[0] + seg_label[0]*1.2,'gray')
             plt.axis('off')
             plt.show()
             print(cls_label)
