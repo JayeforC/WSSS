@@ -205,7 +205,7 @@ uncertainty_masked, prob_x = uncertainty_model(pseudo_label)
 #calculate the uncertainty map part loss
 BCE_criterior = nn.CrossEntropyLoss(ignore_index=255)
 KL_divergence = nn.KLDivLoss(size_average=False,reduce=False)
-uncertainty_loss = BCE_criterior(prob_x,refined_pseudo_label)
+uncertainty_loss = BCE_criterior(prob_x,refined_pseudo_label) 
 
 """
 ##4. final segmentation pseudo label part 
