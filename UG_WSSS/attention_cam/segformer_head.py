@@ -8,7 +8,7 @@ import numpy as np
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
-from mmcv.cnn import ConvModule
+# from mmcv.cnn import ConvModule
 
 class MLP(nn.Module):
     """
@@ -28,7 +28,7 @@ class SegFormerHead(nn.Module):
     """
     SegFormer: Simple and Efficient Design for Semantic Segmentation with Transformers
     """
-    def __init__(self, feature_strides=None, in_channels=128, embedding_dim=256, num_classes=20, **kwargs):
+    def __init__(self, feature_strides=None, in_channels=128, embedding_dim=256, num_classes=2, **kwargs):
         
         super(SegFormerHead, self).__init__()
         self.in_channels = in_channels

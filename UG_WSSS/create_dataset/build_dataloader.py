@@ -54,6 +54,7 @@ class BaseDataset_ACDC(Dataset):
             data = np.load(data_path)
 
         image, label = data['image'], data['label']
+        image = data = np.expand_dims(image,axis=0)
         if self.single_model:
             seg_label = (label == self.organ_cls).astype(np.uint8)
             cls_label = seg_label.max()
@@ -101,6 +102,7 @@ class BaseDataset_ProX2(Dataset):
             data = np.load(data_path)
 
         image, label = data['image'], data['label']
+        image = data = np.expand_dims(image,axis=0)
         if self.cls_model:
             seg_label = (label != 0).astype(np.uint8)
             cls_label = seg_label.max()
@@ -143,11 +145,13 @@ class BaseDataset_CHAOS(Dataset):
         if self.split == "train":
             data_path = os.path.join(self.root_dir,"train_npz", case )
             data = np.load(data_path)
+            
         else: 
             data_path = os.path.join(self.root_dir,"test_npz", case )
             data = np.load(data_path)
 
         image, label = data['image'], data['label']
+        image = data = np.expand_dims(image,axis=0)
         if self.cls_model:
             seg_label = (label != 0).astype(np.uint8)
             cls_label = label.max()
@@ -159,7 +163,7 @@ class BaseDataset_CHAOS(Dataset):
         sample["idx"] = idx
         return sample 
 
-def build_loader(config,num,transform):
+def build_loader(config,num=None,transform=None):
 
     """
     Dataset: 
@@ -167,48 +171,48 @@ def build_loader(config,num,transform):
         ProX2 return 0/1 binary classification
         CHAOS return 63 126 189 252 multi-classification 
     """
-    if config.DATASET == "ACDC":
+    if config.DATA.TYPE == "ACDC":
         train_ds = BaseDataset_ACDC(split='train',num=num,transform=transform)
         val_ds   = BaseDataset_ACDC(split='val',num=num,transform=transform)
 
-        train_loader = torch.utils.data.Dataloader(train_ds,batch_size=config.DATA.BATCH_SZIE,shuffle=True,
+        train_loader = DataLoader(train_ds,batch_size=config.DATA.BATCH_SIZE,shuffle=True,
                                                     num_workers=config.DATA.NUM_WORKERS,pin_memory=True,drop_last=False)
-        val_loader   = torch.utils.data.Dataloader(val_ds,batch_size=config.DATA.BATCH_SZIE,shuffle=False,
+        val_loader   = DataLoader(val_ds,batch_size=config.DATA.BATCH_SIZE,shuffle=False,
                                                     num_workers=config.DATA.NUM_WORKERS,pin_memory=True,drop_last=False)
         return train_ds, val_ds, train_loader, val_loader
 
-    if config.DATASET == "ProX2":
+    if config.DATA.TYPE == "ProX2":
         train_ds = BaseDataset_ProX2(split='train',num=num,transform=transform)
         val_ds   = BaseDataset_ProX2(split='val',num=num,transform=transform)
 
-        train_loader = torch.utils.data.Dataloader(train_ds,batch_size=config.DATA.BATCH_SZIE,shuffle=True,
+        train_loader = DataLoader(train_ds,batch_size=config.DATA.BATCH_SIZE,shuffle=True,
                                                     num_workers=config.DATA.NUM_WORKERS,pin_memory=True,drop_last=False)
-        val_loader   = torch.utils.data.Dataloader(val_ds,batch_size=config.DATA.BATCH_SZIE,shuffle=False,
+        val_loader   = DataLoader(val_ds,batch_size=config.DATA.BATCH_SIZE,shuffle=False,
                                                     num_workers=config.DATA.NUM_WORKERS,pin_memory=True,drop_last=False)
         return train_ds, val_ds, train_loader, val_loader
 
-    if config.DATASET == "CHAOS":
+    if config.DATA.TYPE == "CHAOS":
         """"""
         train_ds = BaseDataset_CHAOS(split='train',num=num,transform=transform)
         val_ds   = BaseDataset_CHAOS(split='val',num=num,transform=transform)
 
-        train_loader = torch.utils.data.Dataloader(train_ds,batch_size=config.DATA.BATCH_SZIE,shuffle=True,
+        train_loader = DataLoader(train_ds,batch_size=config.DATA.BATCH_SIZE,shuffle=True,
                                                     num_workers=config.DATA.NUM_WORKERS,pin_memory=True,drop_last=False)
-        val_loader   = torch.utils.data.Dataloader(val_ds,batch_size=config.DATA.BATCH_SZIE,shuffle=False,
+        val_loader   = DataLoader(val_ds,batch_size=config.DATA.BATCH_SIZE,shuffle=False,
                                                     num_workers=config.DATA.NUM_WORKERS,pin_memory=True,drop_last=False)
         return train_ds, val_ds, train_loader, val_loader
 
 if __name__ == "__main__":
-    train_ds = BaseDataset_CHAOS()
-    train_loader = DataLoader(train_ds,batch_size=1,shuffle=True)
+    train_ds = BaseDataset_ACDC()
+    train_loader = DataLoader(train_ds,batch_size=12,shuffle=True)
     for i,data in enumerate(train_loader):
         if i == 0:
             image, cls_label, seg_label = data['image'], data['cls_label'],data['seg_label']
 
-            plt.imshow(image[0] + seg_label[0]*2,'gray')
-            plt.axis('off')
-            plt.show()
-            print(cls_label)
+            # plt.imshow(image[0] + seg_label[0]*2,'gray')
+            # plt.axis('off')
+            # plt.show()
+            print(image.size())
 
         else:
             break

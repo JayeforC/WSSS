@@ -1,9 +1,10 @@
 import torch
 import torch.nn.functional as F
 from .imutils import denormalize_img, encode_cmap
-from .dcrf import crf_inference_label
+# from .dcrf import crf_inference_label
 import numpy as np
 import imageio
+import matplotlib.pyplot as plt
 
 def cam_to_label(cam, cls_label, img_box=None, ignore_mid=False, cfg=None):
     b, c, h, w = cam.shape
@@ -12,27 +13,29 @@ def cam_to_label(cam, cls_label, img_box=None, ignore_mid=False, cfg=None):
     valid_cam = cls_label_rep * cam
     cam_value, _pseudo_label = valid_cam.max(dim=1, keepdim=False)
     _pseudo_label += 1
-    _pseudo_label[cam_value<=cfg.cam.bkg_score] = 0
+    _pseudo_label[cam_value<=cfg.CAM.BKG_SCORE] = 0
 
-    if img_box is None:
-        return _pseudo_label
+    # if img_box is None:
+    #     return _pseudo_label
 
     if ignore_mid:
-        _pseudo_label[cam_value<=cfg.cam.high_thre] = cfg.dataset.ignore_index
-        _pseudo_label[cam_value<=cfg.cam.low_thre] = 0
-    pseudo_label = torch.ones_like(_pseudo_label) * cfg.dataset.ignore_index
+        _pseudo_label[cam_value<=cfg.CAM.HIGH_THRE] = cfg.DATA.IGNORE_INDEX
+        _pseudo_label[cam_value<=cfg.CAM.LOW_THRE] = 0
+    pseudo_label = torch.ones_like(_pseudo_label) * cfg.DATA.IGNORE_INDEX
 
-    for idx, coord in enumerate(img_box):
-        pseudo_label[idx, coord[0]:coord[1], coord[2]:coord[3]] = _pseudo_label[idx, coord[0]:coord[1], coord[2]:coord[3]]
+    # for idx, coord in enumerate(img_box):
+    #     pseudo_label[idx, coord[0]:coord[1], coord[2]:coord[3]] = _pseudo_label[idx, coord[0]:coord[1], coord[2]:coord[3]]
 
-    return valid_cam, pseudo_label
+    return valid_cam, _pseudo_label.unsqueeze(1).float()
 
 def ignore_img_box(label, img_box, ignore_index):
 
     pseudo_label = torch.ones_like(label) * ignore_index
 
-    for idx, coord in enumerate(img_box):
-        pseudo_label[idx, coord[0]:coord[1], coord[2]:coord[3]] = label[idx, coord[0]:coord[1], coord[2]:coord[3]]
+    # for idx, coord in enumerate(img_box):
+    #     pseudo_label[idx, coord[0]:coord[1], coord[2]:coord[3]] = label[idx, coord[0]:coord[1], coord[2]:coord[3]]
+    for idx in range(len(label)):
+        pseudo_label[idx, :, :] = label[idx, :, :]
 
     return pseudo_label
 
@@ -142,7 +145,10 @@ def multi_scale_cam_with_aff_mat(model, inputs, scales):
         cam = torch.sum(torch.stack(cam_list, dim=0), dim=0)
         cam = cam + F.adaptive_max_pool2d(-cam, (1, 1))
         cam /= F.adaptive_max_pool2d(cam, (1, 1)) + 1e-5
-
+    
+    # vis = cam[0,0].detach().cpu()
+    # plt.imshow(vis)
+    # plt.show()
     max_aff_mat = aff_mat[np.argmax(scales)]
     return cam, max_aff_mat
 
@@ -151,16 +157,16 @@ def refine_cams_with_bkg_v2(ref_mod=None, images=None, cams=None, cls_labels=Non
     b,_,h,w = images.shape
     _images = F.interpolate(images, size=[h//down_scale, w//down_scale], mode="bilinear", align_corners=False)
 
-    bkg_h = torch.ones(size=(b,1,h,w))*cfg.cam.high_thre
+    bkg_h = torch.ones(size=(b,1,h,w))*cfg.CAM.HIGH_THRE
     bkg_h = bkg_h.to(cams.device)
-    bkg_l = torch.ones(size=(b,1,h,w))*cfg.cam.low_thre
+    bkg_l = torch.ones(size=(b,1,h,w))*cfg.CAM.LOW_THRE
     bkg_l = bkg_l.to(cams.device)
 
     bkg_cls = torch.ones(size=(b,1))
     bkg_cls = bkg_cls.to(cams.device)
     cls_labels = torch.cat((bkg_cls, cls_labels), dim=1)
 
-    refined_label = torch.ones(size=(b, h, w)) * cfg.dataset.ignore_index
+    refined_label = torch.ones(size=(b, h, w)) * cfg.DATA.IGNORE_INDEX
     refined_label = refined_label.to(cams.device)
     refined_label_h = refined_label.clone()
     refined_label_l = refined_label.clone()
@@ -170,20 +176,20 @@ def refine_cams_with_bkg_v2(ref_mod=None, images=None, cams=None, cls_labels=Non
     cams_with_bkg_l = torch.cat((bkg_l, cams), dim=1)
     _cams_with_bkg_l = F.interpolate(cams_with_bkg_l, size=[h//down_scale, w//down_scale], mode="bilinear", align_corners=False)#.softmax(dim=1)
 
-    for idx, coord in enumerate(img_box):
-
+    # for idx, coord in enumerate(img_box):
+    for idx in range(b):
         valid_key = torch.nonzero(cls_labels[idx,...])[:,0]
         valid_cams_h = _cams_with_bkg_h[idx, valid_key, ...].unsqueeze(0).softmax(dim=1)
         valid_cams_l = _cams_with_bkg_l[idx, valid_key, ...].unsqueeze(0).softmax(dim=1)
 
-        _refined_label_h = _refine_cams(ref_mod=ref_mod, images=_images[[idx],...], cams=valid_cams_h, valid_key=valid_key, orig_size=(h, w))
-        _refined_label_l = _refine_cams(ref_mod=ref_mod, images=_images[[idx],...], cams=valid_cams_l, valid_key=valid_key, orig_size=(h, w))
+        refined_label_h = _refine_cams(ref_mod=ref_mod, images=_images[[idx],...], cams=valid_cams_h, valid_key=valid_key, orig_size=(h, w))
+        refined_label_l = _refine_cams(ref_mod=ref_mod, images=_images[[idx],...], cams=valid_cams_l, valid_key=valid_key, orig_size=(h, w))
         
-        refined_label_h[idx, coord[0]:coord[1], coord[2]:coord[3]] = _refined_label_h[0, coord[0]:coord[1], coord[2]:coord[3]]
-        refined_label_l[idx, coord[0]:coord[1], coord[2]:coord[3]] = _refined_label_l[0, coord[0]:coord[1], coord[2]:coord[3]]
+        # refined_label_h[idx, coord[0]:coord[1], coord[2]:coord[3]] = _refined_label_h[0, coord[0]:coord[1], coord[2]:coord[3]]
+        # refined_label_l[idx, coord[0]:coord[1], coord[2]:coord[3]] = _refined_label_l[0, coord[0]:coord[1], coord[2]:coord[3]]
 
     refined_label = refined_label_h.clone()
-    refined_label[refined_label_h == 0] = cfg.dataset.ignore_index
+    refined_label[refined_label_h == 0] = cfg.DATA.IGNORE_INDEX
     refined_label[(refined_label_h + refined_label_l) == 0] = 0
 
     return refined_label
@@ -205,20 +211,23 @@ def refine_cams_with_cls_label(ref_mod=None, images=None, labels=None, cams=None
     #bg_label = torch.ones(size=(b, 1),).to(labels.device)
     cls_label = labels
 
-    for idx, coord in enumerate(img_box):
+    # for idx, coord in enumerate(img_box):
+    for idx in range(b):
 
-        _images = images[[idx], :, coord[0]:coord[1], coord[2]:coord[3]]
+        # _images = images[[idx], :, coord[0]:coord[1], coord[2]:coord[3]]
+        _images = images
 
         _, _, h, w = _images.shape
         _images_ = F.interpolate(_images, size=[h//2, w//2], mode="bilinear", align_corners=False)
 
         valid_key = torch.nonzero(cls_label[idx,...])[:,0]
-        valid_cams = cams[[idx], :, coord[0]:coord[1], coord[2]:coord[3]][:, valid_key,...]
+        # valid_cams = cams[[idx], :, coord[0]:coord[1], coord[2]:coord[3]][:, valid_key,...]
+        valid_cams = cams[[idx], :, :, :][:, valid_key,...]
 
         _refined_cams = ref_mod(_images_, valid_cams)
         _refined_cams = F.interpolate(_refined_cams, size=_images.shape[2:], mode="bilinear", align_corners=False)
 
-        refined_cams[idx, valid_key, coord[0]:coord[1], coord[2]:coord[3]] = _refined_cams[0,...]
+        refined_cams[idx, valid_key,:,:] = _refined_cams[0,...]
 
     return refined_cams
 
@@ -229,8 +238,8 @@ def cams_to_affinity_label(cam_label, mask=None, ignore_index=255):
 
     cam_label_resized = F.interpolate(cam_label.unsqueeze(1).type(torch.float32), size=[h//16, w//16], mode="nearest")
 
-    _cam_label = cam_label_resized.reshape(b, 1, -1)
-    _cam_label_rep = _cam_label.repeat([1, _cam_label.shape[-1], 1])
+    _cam_label = cam_label_resized.reshape(b, 1, -1) # h*w 
+    _cam_label_rep = _cam_label.repeat([1, _cam_label.shape[-1], 1]) # b, h*w h*w 
     _cam_label_rep_t = _cam_label_rep.permute(0,2,1)
     aff_label = (_cam_label_rep == _cam_label_rep_t).type(torch.long)
     #aff_label[(_cam_label_rep+_cam_label_rep_t) == 0] = ignore_index

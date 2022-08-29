@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+import torch.nn.functional as F
 
 class get_uncertainty(nn.Module):
     def __init__(self,input_dim,hidden_dim,BatchNorm=nn.BatchNorm2d,dropout=0.1):
@@ -9,8 +10,8 @@ class get_uncertainty(nn.Module):
         self.hidden_dim = hidden_dim
         self.input_proj = nn.Sequential(nn.Conv2d(input_dim,hidden_dim,kernel_size=1,bias=False),BatchNorm(self.hidden_dim),nn.ReLU(inplace=True),nn.Dropout2d(p=dropout))
         self.conv = nn.Conv2d(hidden_dim,hidden_dim,kernel_size=1)
-        self.mean_conv = nn.Conv2d(self.input_dim, 1, kernel_size=1, bias=False)
-        self.std_conv  = nn.Conv2d(self.input_dim, 1, kernel_size=1, bias=False)
+        self.mean_conv = nn.Conv2d(hidden_dim, 1, kernel_size=1, bias=False)
+        self.std_conv  = nn.Conv2d(hidden_dim, 1, kernel_size=1, bias=False)
 
         ##kernel weight define
         kernel = torch.ones((7,7))
@@ -54,11 +55,4 @@ class get_uncertainty(nn.Module):
             residual *= rand_mask.to(torch.float32)
       
         return residual,prob_x
-
-
-def get_uncertainty_loss(estimate_map,pseudo_label,BCE_coefficient=0.5,KL_coefficient=0.1):
-    BCE_criterior = nn.CrossEntropyLoss(ignore_index=255)
-    KL_divergence = nn.KLDivLoss(size_average=False,reduce=False)
-    uncertainty_loss = BCE_coefficient * BCE_criterior(estimate_map,pseudo_label) + KL_coefficient * KL_divergence(estimate_map,pseudo_label)
-    return uncertainty_loss
 
