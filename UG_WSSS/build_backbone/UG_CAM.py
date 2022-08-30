@@ -74,7 +74,7 @@ class Build_UG_CAM(nn.Module):
         """
         ##3. Uncertainty Part
         """
-        uncertainty_model = get_uncertainty(input_dim=1,hidden_dim=32)
+        uncertainty_model = get_uncertainty(input_dim=1,hidden_dim=512)
         uncertainty_model.cuda()
         # use refined psudo lable to generate uncertainty map
         uncertainty_masked, prob_x = uncertainty_model(pseudo_label) 

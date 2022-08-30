@@ -20,12 +20,12 @@ Copy-paste from torch.nn.Transformer with modifications:
 """
 import copy
 from typing import Optional, List
-
+from timm.models.layers import to_2tuple
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 import pdb
-from model.loss import DiscriminativeLoss
+# from model.loss import DiscriminativeLoss
 import numpy as np
 
 class Transformer(nn.Module):
@@ -36,6 +36,7 @@ class Transformer(nn.Module):
                  return_intermediate_dec=False):
         super().__init__()
 
+        self.patch_embeding=PatchEmbeding(img_size=224,patch_size=4,in_channs=1,embed_dim=96,norm_layer=None)
         encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
                                                 dropout, activation, normalize_before)
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
@@ -47,11 +48,13 @@ class Transformer(nn.Module):
         self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm,
                                           return_intermediate=return_intermediate_dec)
 
+        self.input_proj = nn.Sequential(nn.Conv2d(input_dim=1,hidden_dim=d_model,kernel_size=1,bias=False),nn.BatchNorm2d(d_model),nn.ReLU(inplace=True),nn.Dropout2d(p=dropout))
+
         self._reset_parameters()
 
         self.d_model = d_model
         self.nhead = nhead
-        self.loss = DiscriminativeLoss()
+        # self.loss = DiscriminativeLoss()
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -62,6 +65,7 @@ class Transformer(nn.Module):
     def forward(self, src, fea, pos_embed):
         
         # flatten NxCxHxW to HWxNxC
+        src = self.input_proj(src)
         bs, c, h, w = src.shape
         src = src.flatten(2).permute(2, 0, 1)
         pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
@@ -77,14 +81,55 @@ class Transformer(nn.Module):
         memory, pos_embed = self.encoder(src, src_key_padding_mask=None, pos=pos_embed)
         hs = self.decoder(tgt, memory, memory_key_padding_mask=None,
                           pos=pos_embed, query_pos=None)
-        loss = self.loss(memory)
+        # loss = self.loss(memory)
         n, _, _, _ = hs.shape
-        return hs.transpose(2, 3).permute(3, 0, 1, 2).transpose(2, 3).view(bs, n, c, 60, 60).squeeze(1), loss
+        return hs.transpose(2, 3).permute(3, 0, 1, 2).transpose(2, 3).view(bs, n, c, 60, 60).squeeze(1)
 
+class PatchEmbeding(nn.Module):
+    r"""Image to Patch Embedding
+    
+    (B,C,H,W) -> (B,H/patch_size * W/patch_size, embed_dim)
+
+    Args:
+        img_size: Image size. Default 224
+        in_chans (int): Number of input image channels. Default: 3.
+        embed_dim (int): Number of linear projection output channels. Default: 96.
+        norm_layer (nn.Module, optional): Normalization layer. Default: None
+    """
+    
+    def __init__(self,img_size=224,patch_size=4,in_channs=1,embed_dim=96,norm_layer=None):
+        super().__init__()
+        img_size    = to_2tuple(img_size) # to tuple 
+        patch_size  = to_2tuple(patch_size)
+        patch_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1]]
+        self.img_size    = img_size
+        self.patch_size  = patch_size
+        self.embed_dim   = embed_dim
+        self.patch_resolution = patch_resolution
+        self.num_patches = patch_resolution[0] * patch_resolution[1]
+
+        self.proj = nn.Conv2d(in_channs, embed_dim, kernel_size=patch_size,stride= patch_size)
+        if norm_layer is not None:
+            self.norm = norm_layer(embed_dim)
+        else:
+            self.norm = None
+
+
+    def forward(self,x):
+        B, C, H, W = x.shape
+        assert H == self.img_size[0] and W == self.img_size[1], \
+            f"Input Image Size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
+        
+        x = self.proj(x).view(B,self.embed_dim,-1).transpose(1,2) #(B,C,H,W) -> (B,H/ps * W/ps,embed_dim)
+        
+        if self.norm is not None:
+            x = self.norm(x)
+        
+        return x
 
 class TransformerEncoder(nn.Module):
 
-    def __init__(self, encoder_layer, num_layers, norm=None):
+    def __init__(self, encoder_layer, num_layers,norm=None):
         super().__init__()
         self.layers = _get_clones(encoder_layer, num_layers)
         self.num_layers = num_layers
@@ -92,13 +137,13 @@ class TransformerEncoder(nn.Module):
         num_queries = 16
         hidden_dim = 512
         self.pos_embed = nn.Embedding(num_queries, hidden_dim)
+        
 
     def forward(self, src,
                 mask: Optional[Tensor] = None,
                 src_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None):
         output = src
-
         #pos = self.pos_embed.weight.unsqueeze(1).repeat(1, src.shape[1], 1)
         for layer in self.layers:
             output = layer(output, pos=pos)

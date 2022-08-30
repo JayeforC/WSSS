@@ -12011,3 +12011,4 @@
 [2022-08-29 20:05:46 matplotlib.font_manager] (font_manager.py 1341): DEBUG findfont: score(FontEntry(fname='/usr/share/fonts/opentype/urw-base35/NimbusSans-BoldItalic.otf', name='Nimbus Sans', style='italic', variant='normal', weight=700, stretch='normal', size='scalable')) = 11.335
 [2022-08-29 20:05:46 matplotlib.font_manager] (font_manager.py 1341): DEBUG findfont: score(FontEntry(fname='/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf', name='Ubuntu', style='normal', variant='normal', weight=700, stretch='normal', size='scalable')) = 10.335
 [2022-08-29 20:05:46 matplotlib.font_manager] (font_manager.py 1367): DEBUG findfont: Matching sans\-serif:style=normal:variant=normal:weight=normal:stretch=normal:size=10.0 to DejaVu Sans ('/home/jaye/anaconda3/envs/Jaye_env/lib/python3.9/site-packages/matplotlib/mpl-data/fonts/ttf/DejaVuSans.ttf') with score of 0.050000.
+[2022-08-30 09:59:39 root] (main.py 86): INFO Creating model:fusion/FusionFormer_w6
