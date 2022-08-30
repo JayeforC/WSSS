@@ -204,7 +204,7 @@ def build_loader(config,num=None,transform=None):
 
 if __name__ == "__main__":
     train_ds = BaseDataset_ACDC()
-    train_loader = DataLoader(train_ds,batch_size=12,shuffle=True)
+    train_loader = DataLoader(train_ds,batch_size=2,shuffle=True)
     for i,data in enumerate(train_loader):
         if i == 0:
             image, cls_label, seg_label = data['image'], data['cls_label'],data['seg_label']

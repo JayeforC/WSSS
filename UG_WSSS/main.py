@@ -19,6 +19,7 @@ from timm.utils import accuracy, AverageMeter
 
 from utils.update_config import get_config
 from create_dataset.build_dataloader import build_loader
+from build_backbone.loss_calculate import (get_aff_loss, get_cls_loss, get_seg_loss, get_uncertainty_loss)
 from build_backbone.UG_CAM import Build_UG_CAM
 from utils.create_optimizer import build_optimizer
 from utils.create_scheduler import build_scheduler
@@ -93,16 +94,41 @@ def main(config):
     lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
     criterion = torch.nn.CrossEntropyLoss()
 
-    for data in data_loader_train:
-        samples, targets = data["image"], data["cls_label"]
-        samples = samples.float()
-        if samples is not None:
+    for epoch in range(300):
+        for data in data_loader_train:
+            samples, targets = data["image"], data["cls_label"]
+            samples = samples.float()
+            
             samples = samples.cuda()
             targets = targets.cuda()
 
             optimizer.zero_grad()
             outputs = model(inputs=samples,cls_labels=targets.unsqueeze(1),n_iter=1)
+            cls,cls_labels = outputs["cls_loss"]
+            segs,refined_aff_label = outputs["seg_loss"]
+            aff_pred,aff_label = outputs["aff_loss"]
+            prob_x, refined_pseudo_label = outputs["uncertainty_loss"]
+            ##affinity Loss
+            aff_loss, _, _ = get_aff_loss(aff_pred, aff_label)
+            #uncertainty loss
+            uncertainty_loss = get_uncertainty_loss(estimate_map=prob_x,pseudo_label=refined_pseudo_label)
+            #seg loss
+            seg_loss = get_seg_loss(segs, refined_aff_label.type(torch.long), ignore_index=config.DATA.IGNORE_INDEX)
+            #cls_loss
+            cls_loss = get_cls_loss(cls,cls_labels)
+            """ total loss """
+            if epoch <= 30:
+                loss = .0 * cls_loss + 0.0 * seg_loss + 0.0 * aff_loss + 0.0 * uncertainty_loss
+            elif epoch > 30 and epoch <= 60:
+                loss = 1.0 * cls_loss + 0.0 * seg_loss + 0.1 * aff_loss + 0.0 * uncertainty_loss
+            elif epoch > 60 and epoch <= 120:
+                loss = 1.0 * cls_loss + 0.0 * seg_loss + 0.1 * aff_loss + 0.1 * uncertainty_loss
+            else:
+                loss = 1.0 * cls_loss + 0.1 * seg_loss + 0.1 * aff_loss + 0.1 * uncertainty_loss
 
+            loss.backward()
+            optimizer.step()
+        lr_scheduler.step()
 
 if __name__ == "__main__":
     args,config = parse_option()

@@ -30,13 +30,13 @@ import numpy as np
 
 class Transformer(nn.Module):
 
-    def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
+    def __init__(self, d_model=96, nhead=8, num_encoder_layers=6,
                  num_decoder_layers=6, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False,
                  return_intermediate_dec=False):
         super().__init__()
 
-        self.patch_embeding=PatchEmbeding(img_size=224,patch_size=4,in_channs=1,embed_dim=96,norm_layer=None)
+        self.patch_embeding=PatchEmbeding(img_size=224,patch_size=4,in_channs=96,embed_dim=96,norm_layer=None)
         encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
                                                 dropout, activation, normalize_before)
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
@@ -48,7 +48,7 @@ class Transformer(nn.Module):
         self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm,
                                           return_intermediate=return_intermediate_dec)
 
-        self.input_proj = nn.Sequential(nn.Conv2d(input_dim=1,hidden_dim=d_model,kernel_size=1,bias=False),nn.BatchNorm2d(d_model),nn.ReLU(inplace=True),nn.Dropout2d(p=dropout))
+        self.input_proj = nn.Sequential(nn.Conv2d(in_channels=3,out_channels=d_model,kernel_size=1,bias=False),nn.BatchNorm2d(d_model),nn.ReLU(inplace=True),nn.Dropout2d(p=dropout))
 
         self._reset_parameters()
 
@@ -67,12 +67,15 @@ class Transformer(nn.Module):
         # flatten NxCxHxW to HWxNxC
         src = self.input_proj(src)
         bs, c, h, w = src.shape
-        src = src.flatten(2).permute(2, 0, 1)
-        pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+        # src = src.flatten(2).permute(2, 0, 1)
+        src = self.patch_embeding(src)
+        # pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+        pos_embed = self.patch_embeding(pos_embed)
         #query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
         #mask = mask.flatten(1).to(torch.uint8)
 
-        tgt = fea.view(bs, c, -1).permute(2, 0, 1)
+        # tgt = fea.view(bs, c, -1).permute(2, 0, 1)
+        tgt = self.patch_embeding(fea)
         #if self.training:
         #    mask = np.random.randint(0, tgt.shape[0], int(0.1*tgt.shape[0]))
         #    tgt[mask] = 0.
@@ -83,8 +86,8 @@ class Transformer(nn.Module):
                           pos=pos_embed, query_pos=None)
         # loss = self.loss(memory)
         n, _, _, _ = hs.shape
-        return hs.transpose(2, 3).permute(3, 0, 1, 2).transpose(2, 3).view(bs, n, c, 60, 60).squeeze(1)
-
+        # return hs.transpose(2, 3).permute(3, 0, 1, 2).transpose(2, 3).view(bs, n, c, 60, 60).squeeze(1)
+        return hs[:]
 class PatchEmbeding(nn.Module):
     r"""Image to Patch Embedding
     
@@ -97,7 +100,7 @@ class PatchEmbeding(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer. Default: None
     """
     
-    def __init__(self,img_size=224,patch_size=4,in_channs=1,embed_dim=96,norm_layer=None):
+    def __init__(self,img_size=224,patch_size=4,in_channs=96,embed_dim=96,norm_layer=None):
         super().__init__()
         img_size    = to_2tuple(img_size) # to tuple 
         patch_size  = to_2tuple(patch_size)
@@ -108,7 +111,7 @@ class PatchEmbeding(nn.Module):
         self.patch_resolution = patch_resolution
         self.num_patches = patch_resolution[0] * patch_resolution[1]
 
-        self.proj = nn.Conv2d(in_channs, embed_dim, kernel_size=patch_size,stride= patch_size)
+        self.proj = nn.Conv2d(in_channels=in_channs, out_channels=embed_dim, kernel_size=patch_size,stride= patch_size)
         if norm_layer is not None:
             self.norm = norm_layer(embed_dim)
         else:
@@ -163,8 +166,8 @@ class TransformerDecoder(nn.Module):
         self.norm = norm
         self.return_intermediate = return_intermediate
 
-        hidden_dim = 512
-        self.query_embed = nn.Embedding(3600, hidden_dim)
+        hidden_dim = 96
+        self.query_embed = nn.Embedding(2, hidden_dim)
 
     def forward(self, tgt, memory,
                 tgt_mask: Optional[Tensor] = None,

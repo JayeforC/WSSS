@@ -12,12 +12,17 @@ from attention_cam.camutils import (cam_to_label, cams_to_affinity_label, ignore
                             propagte_aff_cam_with_bkg, refine_cams_with_bkg_v2,
                             refine_cams_with_cls_label)
 
-import matplotlib.pyplot as plt 
+from .across_attn import Transformer
+from .pos_embedding import mask_from_tensor,build_position_encoding
+import matplotlib.pyplot as plt
+
 
 class Build_UG_CAM(nn.Module):
     def __init__(self,config):
         super().__init__()
         self.cfg = config
+        self.proj = nn.Conv2d(in_channels=1,out_channels=3,kernel_size=1)
+        self.transformer = Transformer()
     
     def get_mask_by_radius(self,h=20, w=20, radius=8):
         hw = h * w 
@@ -74,7 +79,7 @@ class Build_UG_CAM(nn.Module):
         """
         ##3. Uncertainty Part
         """
-        uncertainty_model = get_uncertainty(input_dim=1,hidden_dim=512)
+        uncertainty_model = get_uncertainty(input_dim=1,hidden_dim=96)
         uncertainty_model.cuda()
         # use refined psudo lable to generate uncertainty map
         uncertainty_masked, prob_x = uncertainty_model(pseudo_label) 
@@ -118,7 +123,15 @@ class Build_UG_CAM(nn.Module):
         refined_aff_label = ignore_img_box(refined_aff_label, img_box=None, ignore_index=self.cfg.DATA.IGNORE_INDEX)
 
         """place two: integrate uncertanity with refined aff label"""
-        refined_aff_label = Transformer(across_attention, refined_aff_label,uncertainty_masked)
+        x = self.proj(refined_aff_label[:,None,:,:].float())
+        pos_embed = build_position_encoding(dim=96,mode="v2")
+
+ 
+        x,mask = mask_from_tensor(x)
+ 
+        pos = pos_embed(x,mask)
+
+        refined_aff_label = self.transformer(x,uncertainty_masked,pos)
         # plt.imshow(refined_aff_label[0].detach().cpu())
         # plt.imshow(uncertainty_masked[0,0,:,:].detach().cpu())
         # plt.show()
